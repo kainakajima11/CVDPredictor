@@ -3,13 +3,31 @@ import numpy as np
 import pandas as pd
 import torch
 import plotly.graph_objs as go
+import torch.nn as nn
+import torch.nn.functional as F
 
+class SimpleFC(nn.Module):
+    def __init__(self,
+                 input_dim,
+                 output_dim):
+        super().__init__()
+        self.fc1: nn.Linear = nn.Linear(input_dim, 64)
+        self.fc2: nn.Linear = nn.Linear(64, 32)
+        self.fc3: nn.Linear = nn.Linear(32, output_dim)
+
+    def forward(self,
+                x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        thickness = self.fc3(x)
+        return thickness
+    
 def main():
     st.title("膜厚予測可視化")
     out_file = st.file_uploader("outファイルを選んでください")
     if out_file is not None:
         input_cols, mins, maxs = read_out(out_file)
-        uploaded_model = st.file_uploader("modelを選んでください(ex. model_full.pth)", type=["pth"])
+        uploaded_model = st.file_uploader("modelを選んでください(ex. model_weights.pth)", type=["pth"])
 
         if uploaded_model is not None:
             time_idx = next((i for i, x in enumerate(input_cols) if x == "S14_length"), None)
@@ -21,7 +39,7 @@ def main():
             inputs_norm = normalize_arrs(inputs, mins, maxs)
 
             times = [30 + 5*i for i in range(30)]
-            preds = predict(times, uploaded_model, inputs_norm, time_idx, mins, maxs)
+            preds = predict(times, len(input_cols), uploaded_model, inputs_norm, time_idx, mins, maxs)
 
             goplot_preds(times, preds, target_film_thickness)
 
@@ -49,7 +67,7 @@ def main():
     st.markdown("""
         #### 膜厚予測について  
         操炉条件から膜厚を予測して、横軸を成膜時間(S14)、縦軸を予想膜厚としたグラフを作成します.  
-        modelファイルには学習済み機械学習モデルファイル(model_full.pth)を選択してください.    
+        modelファイルには学習済み機械学習モデルファイル(model_weights.pth)を選択してください.    
         outファイルにはmodel_full.pthと同じディレクトリにあるoutファイルを選択してください.   
         炉詰めする製品を選択し（例えばOTを入れるなら、品略_OTを選択する）,その個数を入力してください.  
         複数の製品種類の操炉の場合は複数選択して、それぞれ個数を入力してください.  
@@ -111,9 +129,10 @@ def read_out(out_file, st_flag=True):
         get_line_signal = max(0, get_line_signal - 1)
     return input_cols, np.array(mins), np.array(maxs)
 
-def predict(times, model_path, inputs, time_idx, mins, maxs):
+def predict(times, input_dim, model_path, inputs, time_idx, mins, maxs):
     inputs = torch.tensor(inputs).float().unsqueeze(0)
-    model = torch.load(model_path, weights_only=False, map_location="cpu")
+    model = SimpleFC(input_dim, 3)
+    model.load_state_dict(torch.load(model_path, map_location="cpu"))
     preds = np.zeros((len(times), 3), dtype=float)
     model.eval()
     with torch.no_grad():
