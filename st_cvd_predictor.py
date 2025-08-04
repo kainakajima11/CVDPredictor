@@ -1,7 +1,6 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import torch
 import plotly.graph_objs as go
 
@@ -171,15 +170,6 @@ def goplot_preds(times, preds, target_film_thickness):
         template="plotly_white"
     )
     st.plotly_chart(fig, use_container_width=True)
-
-def plot_preds(times, preds, target_film_thickness):
-    fig, ax = plt.subplots()
-    ax.axhline(y=target_film_thickness, color='black', linestyle='-')
-    ax.plot(times, preds[0], c="r", marker="o", label='Upper')
-    ax.plot(times, preds[1], c="b", marker="o", label='Middle')
-    ax.plot(times, preds[2], c="g", marker="o", label='Lower')
-    ax.legend()
-    st.pyplot(fig)
 
 # for debug
 def manual_main():
