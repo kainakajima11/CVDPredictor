@@ -113,7 +113,7 @@ def read_out(out_file, st_flag=True):
 
 def predict(times, model_path, inputs, time_idx, mins, maxs):
     inputs = torch.tensor(inputs).float().unsqueeze(0)
-    model = torch.load(model_path, weights_only=False)
+    model = torch.load(model_path, weights_only=False, map_location="cpu")
     preds = np.zeros((len(times), 3), dtype=float)
     model.eval()
     with torch.no_grad():
