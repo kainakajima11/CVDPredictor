@@ -1,0 +1,32 @@
+# Python バイトコード
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 仮想環境
+venv/
+.env/
+.venv/
+
+# Jupyter Notebook のチェックポイント
+.ipynb_checkpoints/
+
+# OS による一時ファイル
+.DS_Store
+Thumbs.db
+
+# IDE・エディタの設定ファイル
+.vscode/
+.idea/
+
+# ログや一時ファイル
+*.log
+*.tmp
+
+# 環境設定やシークレット
+.env
+*.env
+
+# Streamlit キャッシュ
+.streamlit/config.toml
+.streamlit/secrets.toml
