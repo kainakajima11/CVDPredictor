@@ -4,7 +4,7 @@ import pandas as pd
 import torch
 import plotly.graph_objs as go
 
-from .model import SimpleFC
+from model import SimpleFC
     
 def main():
     st.title("膜厚予測可視化")
