@@ -1,6 +1,0 @@
-streamlit
-numpy
-pandas
-torch==2.7.1
-plotly
-

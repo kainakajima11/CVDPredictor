@@ -3,24 +3,8 @@ import numpy as np
 import pandas as pd
 import torch
 import plotly.graph_objs as go
-import torch.nn as nn
-import torch.nn.functional as F
 
-class SimpleFC(nn.Module):
-    def __init__(self,
-                 input_dim,
-                 output_dim):
-        super().__init__()
-        self.fc1: nn.Linear = nn.Linear(input_dim, 64)
-        self.fc2: nn.Linear = nn.Linear(64, 32)
-        self.fc3: nn.Linear = nn.Linear(32, output_dim)
-
-    def forward(self,
-                x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        thickness = self.fc3(x)
-        return thickness
+from .model import SimpleFC
     
 def main():
     st.title("膜厚予測可視化")
@@ -73,7 +57,7 @@ def main():
         複数の製品種類の操炉の場合は複数選択して、それぞれ個数を入力してください.  
         加えて温度条件、狙い膜厚をそれぞれ入力してください。狙い膜厚は予測結果には影響しません.  
         結果として、下に3本の曲線をグラフが得られます。 赤、青、緑がそれぞれ上部、中部、下部の予測膜厚です.  
-        横軸は成膜時間です。黒い点線は入力した狙い膜厚です。<br>           
+        横軸は成膜時間です。黒い点線は入力した狙い膜厚です.        
 
         #### 類似操炉検索について 
         操炉条件より、類似した条件の操炉の上位10個を出力します.  
@@ -149,19 +133,19 @@ def make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, par
     input_dict["S12_Ave_TempLower"] = temp_s12 + para
     input_dict["S14_Ave_TempUpper"] = temp_s14
     input_dict["S14_Ave_TempLower"] = temp_s14 + para
-    input_dict["MTCS比率"] = 0.9
+    input_dict["MTCS比率"] = 0.9 # TODO MTCS比率の扱い
     return np.array(list(input_dict.values()))
 
 def st_receive_input(products_list):
-    selected_vars = st.multiselect("製品を選択してください（複数選択可）", products_list)
+    selected_vars = st.multiselect("炉詰めする製品を選択してください（複数選択可）", products_list)
     input_values = []
     for var in selected_vars:
-        val = st.number_input(f"{var} の値を入力", value=1, key=var)
+        val = st.number_input(f"{var} の個数を入力", value=1, key=var)
         input_values.append(val)
 
     temp_s12 = st.number_input("成膜温度S12 (℃)", value=1155)
     temp_s14 = st.number_input("成膜温度S14 (℃)", value=1195)
-    para = st.number_input("PARA値", value=0)
+    para = st.number_input("PARA値", value=15)
     target_film_thickness = st.number_input("狙い膜厚", value=60)
 
     return selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness
