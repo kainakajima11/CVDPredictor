@@ -1,0 +1,43 @@
+paths: # 生産計画 ファイル (生管のSPOにあるやつ, 要らない行を事前に手作業で消している)
+# 品略が書かれていないダミーに関しては、手作業で品略（と個数）を入力しないとダミーのデータは反映されない
+ - c:\Users\kai.nakajima\Desktop\AMG\FilmThicknessPrediction\production_schedule\FMT0850M112-01_CVD1号炉計画2025_until_A25-283_dummy_manual_correction.xlsm
+ - c:\Users\kai.nakajima\Desktop\AMG\FilmThicknessPrediction\production_schedule\FMT0850M112-01_CVD1号炉計画_untilA24-461_dummy_manual_correction.xlsm
+
+out_path: C:\Users\kai.nakajima\Desktop\AMG\FilmThicknessPrediction\rodume_data\rodume_dat.csv # 炉詰めデータとして出力されるファイル
+
+products_corrections: # 品略カラムにあるものの修正(次元削減のため)
+  SEBO0UXXM1: BO0
+  0A26A: SC0
+  OTV: OT
+  WF: WF6
+  WFV: WF6
+  WFV(0): WF0
+  WF(0): WF0
+  WFV(0: WF0
+  WFV)0: WF0
+  SC6 0: SC6
+  ＳＣ8: SC8
+  TB(0): TB0
+  TBA: TB0
+  TBV(0: TB0
+  TBA(0: TB0
+  TBA(0): TB0
+  TB(8): TB8
+  TB8V: TB8
+  TBA(8: TB8
+  TBA(8): TB8
+  ＴＬ0: TL0
+  ＴＬ6: TL6
+
+run_id_unused: # データとして取り込まない操炉
+ - A19-276 # Siウエハが唯一炉詰めされている。
+ - A20-149 # - という品略がある。
+ - A20-165 # - という品略がある。
+ - A20-166 # - という品略がある。
+ - A19-034 # TBは44439個炉詰めされている明らかな外れ値
+
+product_unused: # データとして取り込まな製品種
+ - (Siｳｪﾊ)
+ - '-'
+ - TP
+ - 溝付TP

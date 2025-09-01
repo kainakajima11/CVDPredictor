@@ -1,19 +1,23 @@
-import torch
+import torch 
 import torch.nn as nn
-import torch.nn.functional as F
 
-class SimpleFC(nn.Module):
+"""model置き場"""
+
+class ThreeFullyConnectedLayers(nn.Module):
     def __init__(self,
                  input_dim,
-                 output_dim):
+                 output_dim,
+                 hidden1_dim = 64,
+                 hidden2_dim = 32):
         super().__init__()
-        self.fc1: nn.Linear = nn.Linear(input_dim, 64)
-        self.fc2: nn.Linear = nn.Linear(64, 32)
-        self.fc3: nn.Linear = nn.Linear(32, output_dim)
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden1_dim),
+            nn.ReLU(),
+            nn.Linear(hidden1_dim, hidden2_dim),
+            nn.ReLU(),
+            nn.Linear(hidden2_dim, output_dim)
+        )
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        thickness = self.fc3(x)
-        return thickness
+        return self.net(x)
     

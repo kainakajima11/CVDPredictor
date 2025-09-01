@@ -5,32 +5,26 @@ import torch
 import plotly.graph_objs as go
 
 from model import ThreeFullyConnectedLayers
-
+    
 def main():
     st.title("膜厚予測可視化")
     out_file = st.file_uploader("outファイルを選んでください")
     if out_file is not None:
-        input_cols, mins, maxs, _n_train, _n_test, run_type = read_out(out_file)
+        input_cols, mins, maxs, n_train, n_test, run_type = read_out(out_file)
         uploaded_model = st.file_uploader("modelを選んでください(ex. model_weights.pth)", type=["pth"])
 
         if uploaded_model is not None:
-            if run_type == "Normal":
-                time_idx = next((i for i, x in enumerate(input_cols) if x == "S14_length"), None) 
-                times = [30 + 5*i for i in range(55)] # 30 ~ 300
-            elif run_type == "Reduced":
-                time_idx = next((i for i, x in enumerate(input_cols) if x == "S12_length"), None) 
-                times = [70 + 5*i for i in range(67)] # 70 ~ 400
             input_dict = {k : 0 for k in input_cols}
             product_cols = [c for c in input_cols if c.startswith("品略")]
 
             # 炉詰め内容を受け取る
-            selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness = st_receive_input(product_cols)
-            inputs = make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para)
+            selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness, deposition_time1, deposition_time2, deposition_time3  = st_receive_input(product_cols)
+            inputs = make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para, deposition_time1, deposition_time3)
             inputs_norm = normalize_arrs(inputs, mins, maxs)
             # 予測を行う
-            preds = predict(times, len(input_cols), uploaded_model, inputs_norm, time_idx, mins, maxs)
-            # プロット
-            goplot_preds(times, preds, target_film_thickness)
+            pred = predict(len(input_cols), uploaded_model, inputs_norm)
+            
+            st.write(f"推論結果: {pred}")
 
             st.header("類似操炉検索")
             npz_file = st.file_uploader(".npzファイルを選んでください")
@@ -73,7 +67,7 @@ def main():
     """)
 
 def normalize_arrs(arrs, mins, maxs):
-    """正規化を行う"""
+    """正規化"""
     return  (arrs - mins) / (maxs - mins)           
 
 def denormalize_arrs(arrs, mins, maxs):
@@ -100,7 +94,6 @@ def search_vector(arr, q, ignore_dims, func = "CosineSimilarity", top_n = 10):
         top_arrs = arr[top_idx]
     return top_idx, top_scores, top_arrs
 
-
 def read_out(out_file, st_flag=True):
     """
     モデル構築時に出力されるoutファイルを読み込む。
@@ -114,8 +107,6 @@ def read_out(out_file, st_flag=True):
     
     now_status = 0
     get_line_signal, input_cols, mins, maxs = 0, None, None, None
-    n_train, n_test = None, None
-    run_type = "Normal"
     # 1行ずつ見ていく
     for line in lines:
         spline = line.split()
@@ -145,28 +136,25 @@ def read_out(out_file, st_flag=True):
 
     return input_cols, np.array(mins), np.array(maxs), n_train, n_test, run_type
 
-def predict(times, input_dim, model_path, inputs, time_idx, mins, maxs):
+def predict(input_dim, model_path, inputs):
     inputs = torch.tensor(inputs).float().unsqueeze(0)
     model = ThreeFullyConnectedLayers(input_dim, 3)
     model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    preds = np.zeros((len(times), 3), dtype=float)
     model.eval()
-    with torch.no_grad():
-        for i, time in enumerate(times):
-            inputs[0][time_idx] = (time - mins[time_idx]) / (maxs[time_idx] - mins[time_idx])
-            preds[i] = model(inputs).numpy()
+    pred = model(inputs)
     
-    return preds.T
+    return pred.T
 
-def make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para):
+def make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para, deposition_time1, deposition_time3):
     for var, val in zip(selected_vars, input_values):
         input_dict[var] = val
-    # st上で入力していないカラムを埋めていく.
-    input_key_cand = ["S12_Ave_TempUpper", "S12_Ave_TempLower", "S14_Ave_TempUpper", "S14_Ave_TempLower", "MTCS比率"]
-    input_value_cand = [temp_s12, temp_s12 + para, temp_s14, temp_s14 + para, 1.0] # TODO MTCS比率の扱い(定数でいいのか)
-    for k, v in zip(input_key_cand, input_value_cand):
-        if k in input_dict:
-            input_dict[k] = v
+    input_dict["S12_Ave_TempUpper"] = temp_s12
+    input_dict["S12_Ave_TempLower"] = temp_s12 + para
+    input_dict["S14_Ave_TempUpper"] = temp_s14
+    input_dict["S14_Ave_TempLower"] = temp_s14 + para
+    # input_dict["S12_length"] = deposition_time1
+    input_dict["S14_length"] = deposition_time3
+    input_dict["MTCS比率"] = 0.9 # TODO MTCS比率の扱い
     return np.array(list(input_dict.values()))
 
 def st_receive_input(products_list):
@@ -179,34 +167,12 @@ def st_receive_input(products_list):
     temp_s12 = st.number_input("成膜温度S12 (℃)", value=1155)
     temp_s14 = st.number_input("成膜温度S14 (℃)", value=1195)
     para = st.number_input("PARA値", value=15)
-    mtcs_rate = st.number_input("MTCS比率", value=1.0)
     target_film_thickness = st.number_input("狙い膜厚", value=60)
+    deposition_time1 = st.number_input("成膜時間1", value=50)
+    deposition_time2 = st.number_input("成膜時間2", value=20)
+    deposition_time3 = st.number_input("成膜時間3", value=70)
 
-    return selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness
-
-def goplot_preds(times, preds, target_film_thickness):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=times, y=preds[0], mode='lines+markers', name='Upper', line=dict(color='red')
-    ))
-    fig.add_trace(go.Scatter(
-        x=times, y=preds[1], mode='lines+markers', name='Middle', line=dict(color='blue')
-    ))
-    fig.add_trace(go.Scatter(
-        x=times, y=preds[2], mode='lines+markers', name='Lower', line=dict(color='green')
-    ))
-    fig.add_trace(go.Scatter(
-        x=times, y=[target_film_thickness] * len(times), mode='lines',
-        name='Target', line=dict(color='black', dash='dash')
-    ))
-    fig.update_layout(
-        title="成膜時間-予想膜厚",
-        xaxis_title="成膜時間",
-        yaxis_title="予想膜厚",
-        hovermode="x unified",
-        template="plotly_white"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    return selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness, deposition_time1, deposition_time2, deposition_time3
 
 # for debug
 def manual_main():
