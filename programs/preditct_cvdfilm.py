@@ -24,13 +24,14 @@ def main():
             product_cols = [c for c in input_cols if c.startswith("品略")]
 
             # 炉詰め内容を受け取る
-            selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness = st_receive_input(product_cols)
-            inputs = make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para)
+            cvdrun = CVDRun()
+            cvdrun.receive_input(product_cols)
+            inputs = cvdrun.make_inputs(input_dict)
             inputs_norm = normalize_arrs(inputs, mins, maxs)
             # 予測を行う
             preds = predict(times, len(input_cols), uploaded_model, inputs_norm, time_idx, mins, maxs)
             # プロット
-            goplot_preds(times, preds, target_film_thickness)
+            goplot_preds(times, preds, cvdrun.target_film_thickness)
 
             st.header("類似操炉検索")
             npz_file = st.file_uploader(".npzファイルを選んでください")
@@ -158,32 +159,51 @@ def predict(times, input_dim, model_path, inputs, time_idx, mins, maxs):
     
     return preds.T
 
-def make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para):
-    for var, val in zip(selected_vars, input_values):
-        input_dict[var] = val
-    # st上で入力していないカラムを埋めていく.
-    input_key_cand = ["S12_Ave_TempUpper", "S12_Ave_TempLower", "S14_Ave_TempUpper", "S14_Ave_TempLower", "MTCS比率"]
-    input_value_cand = [temp_s12, temp_s12 + para, temp_s14, temp_s14 + para, 1.0] # TODO MTCS比率の扱い(定数でいいのか)
-    for k, v in zip(input_key_cand, input_value_cand):
-        if k in input_dict:
-            input_dict[k] = v
-    return np.array(list(input_dict.values()))
+class CVDRun:
+    def __init__(self,):
+        self.s12_temp, self.s14_temp, self.para = None, None, None
+        self.mtcs_rate = None
+        self.target_film_thickness = None
+        self.selected_vars = None
+        self.input_values = []
 
-def st_receive_input(products_list):
-    selected_vars = st.multiselect("炉詰めする製品を選択してください（複数選択可）", products_list)
-    input_values = []
-    for var in selected_vars:
-        val = st.number_input(f"{var} の個数を入力", value=1, key=var)
-        input_values.append(val)
+    @property
+    def s12_temp_upper(self):
+        return self.s12_temp
+    
+    @property
+    def s12_temp_lower(self):
+        return self.s12_temp + self.para
+    
+    @property
+    def s14_temp_upper(self):
+        return self.s14_temp
+    
+    @property
+    def s14_temp_lower(self):
+        return self.s14_temp + self.para
+    
+    def receive_input(self, products_list):
+        self.selected_vars = st.multiselect("炉詰めする製品を選択してください（複数選択可）", products_list)
+        for var in self.selected_vars:
+            val = st.number_input(f"{var} の個数を入力", value=1, key=var)
+            self.input_values.append(val)
+        self.s12_temp = st.number_input("成膜温度S12 (℃)", value=1145)
+        self.s14_temp = st.number_input("成膜温度S14 (℃)", value=1185)
+        self.para = st.number_input("PARA値", value=15)
+        self.mtcs_rate = st.number_input("MTCS比率", value=0.9)
+        self.target_film_thickness = st.number_input("狙い膜厚", value=60)
 
-    temp_s12 = st.number_input("成膜温度S12 (℃)", value=1155)
-    temp_s14 = st.number_input("成膜温度S14 (℃)", value=1195)
-    para = st.number_input("PARA値", value=15)
-    mtcs_rate = st.number_input("MTCS比率", value=1.0)
-    target_film_thickness = st.number_input("狙い膜厚", value=60)
-
-    return selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness
-
+    def make_inputs(self, input_dict):
+        for var, val in zip(self.selected_vars, self.input_values):
+            input_dict[var] = val
+        input_key_cand = ["S12_Ave_TempUpper", "S12_Ave_TempLower", "S14_Ave_TempUpper", "S14_Ave_TempLower", "MTCS比率"]
+        input_value_cand = [self.s12_temp_upper, self.s12_temp_lower, self.s14_temp_upper, self.s14_temp_lower, self.mtcs_rate]
+        for k, v in zip(input_key_cand, input_value_cand):
+            if k in input_dict:
+                input_dict[k] = v
+        return np.array(list(input_dict.values()))
+    
 def goplot_preds(times, preds, target_film_thickness):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
