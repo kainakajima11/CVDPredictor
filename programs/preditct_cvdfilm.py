@@ -7,17 +7,17 @@ import plotly.graph_objs as go
 from model import ThreeFullyConnectedLayers
 
 def main():
-    st.title("膜厚予測可視化")
+    st.title("CVD SiCness Predictor")
     out_file = st.file_uploader("outファイルを選んでください")
     if out_file is not None:
         input_cols, mins, maxs, _n_train, _n_test, run_type = read_out(out_file)
         uploaded_model = st.file_uploader("modelを選んでください(ex. model_weights.pth)", type=["pth"])
 
         if uploaded_model is not None:
-            if run_type == "Normal":
+            if run_type == "Normal": # 常圧
                 time_idx = next((i for i, x in enumerate(input_cols) if x == "S14_length"), None) 
                 times = [30 + 5*i for i in range(55)] # 30 ~ 300
-            elif run_type == "Reduced":
+            elif run_type == "Reduced": # 減圧
                 time_idx = next((i for i, x in enumerate(input_cols) if x == "S12_length"), None) 
                 times = [70 + 5*i for i in range(67)] # 70 ~ 400
             input_dict = {k : 0 for k in input_cols}
@@ -37,34 +37,21 @@ def main():
             npz_file = st.file_uploader(".npzファイルを選んでください")
             if npz_file is not None:
                 data = np.load(npz_file, allow_pickle=True)
-                x_train = data["x_train"]
-                y_train = data["y_train"]
-                fons = data["others_train"]     
-                # ベクトル検索
-                top_idx, top_scores, top_arrs = search_vector(x_train, inputs_norm, ignore_dims=[11])
-                top_arrs = denormalize_arrs(top_arrs, mins, maxs)
-                top_fons = np.array(fons[top_idx])
-                top_thicknesses = np.array(y_train[top_idx])
-
-                combined = np.hstack([top_fons, top_scores.reshape(-1, 1), top_thicknesses, top_arrs])
-                vector_search_cols = ["RunID", "SCORE"] + ["膜厚_上", "膜厚_中", "膜厚_下"] + input_cols
-                df_query = pd.DataFrame([inputs], columns = input_cols)
-                df_top = pd.DataFrame(combined, columns=vector_search_cols)
+                df_top = search_similar_runs(data, inputs_norm, mins, maxs, input_cols, cvdrun.target_film_thickness)
                 st.write("今回の操炉内容")
-                st.dataframe(df_query)
-                st.write("内容の近い操炉")
+                st.dataframe(pd.DataFrame([inputs], columns = input_cols))
+                st.write("内容の近い操炉内容")
                 st.dataframe(df_top)
 
     st.markdown("""
         #### 膜厚予測について  
-        操炉条件から膜厚を予測して、横軸を成膜時間(S14)、縦軸を予想膜厚としたグラフを作成します.  
-        modelファイルには学習済み機械学習モデルファイル(model_weights.pth)を選択してください.    
-        outファイルにはmodel_full.pthと同じディレクトリにあるoutファイルを選択してください.   
-        炉詰めする製品を選択し（例えばOTを入れるなら、品略_OTを選択する）,その個数を入力してください.  
-        複数の製品種類の操炉の場合は複数選択して、それぞれ個数を入力してください.  
-        加えて温度条件、狙い膜厚をそれぞれ入力してください。狙い膜厚は予測結果には影響しません.  
-        結果として、下に3本の曲線をグラフが得られます。 赤、青、緑がそれぞれ上部、中部、下部の予測膜厚です.  
-        横軸は成膜時間です。黒い点線は入力した狙い膜厚です.        
+        操炉内容から膜厚を予測し、成膜時間-予想膜厚グラフを作成する.常圧の場合はS14, 減圧の場合はS12.  
+        outファイルには, outというファイルを選択する.(model_weights.pthと同じ場所にあるもの) 
+        modelファイルには学習済み機械学習モデルファイル(model_weights.pth)を選択する.      
+                
+        グラフは3本の曲線と1本の横線が引かれる. 赤、青、緑の曲線はそれぞれ上部、中部、下部の予測膜厚を示す.
+        横線は狙い膜厚を表す。狙い膜厚は予測結果には影響しない.  
+        上部がない操炉(TLなど)であっても仕様上このモデルは上部の予測も出力される仕様である.      
 
         #### 類似操炉検索について 
         操炉条件より、類似した条件の操炉の上位10個を出力します.  
@@ -81,6 +68,41 @@ def denormalize_arrs(arrs, mins, maxs):
     """正規化をもとに戻す"""
     return arrs * (maxs - mins) + mins
     
+def _search_similar_runs(data, inputs_norm, mins, maxs, input_cols, inputs):
+    x_train = data["x_train"]
+    y_train = data["y_train"]
+    fons = data["others_train"]     
+    # ベクトル検索
+    top_idx, top_scores, top_arrs = search_vector(x_train, inputs_norm, ignore_dims=[11])
+    top_arrs = denormalize_arrs(top_arrs, mins, maxs)
+    top_fons = np.array(fons[top_idx])
+    top_thicknesses = np.array(y_train[top_idx])
+
+    combined = np.hstack([top_fons, top_scores.reshape(-1, 1), top_thicknesses, top_arrs])
+    vector_search_cols = ["RunID", "SCORE"] + ["膜厚_上", "膜厚_中", "膜厚_下"] + input_cols
+    df_top = pd.DataFrame(combined, columns=vector_search_cols)
+    return df_top
+
+def search_similar_runs(data, inputs_norm, mins, maxs, input_cols, target_thickness):
+    x_train = data["x_train"]
+    y_train = data["y_train"]
+    fons = data["others_train"] 
+
+    y_mins, y_maxs = np.nanmin(y_train, axis=0), np.nanmax(y_train, axis=0)
+    y_norm_train = normalize_arrs(y_train, y_mins, y_maxs)
+    ignore_dims = [i for i, col in enumerate(input_cols) if not col.startswith("品略")]
+    ignore_dims = np.concatenate([ignore_dims, (np.where(np.isnan(y_mins))[0] + len(input_cols))], axis=0)
+    vec_database = np.concatenate([x_train, y_norm_train], axis=1) # database
+    vec_query = np.concatenate([np.array(inputs_norm), np.array([target_thickness, target_thickness, target_thickness])])
+    top_idx, top_scores = search_vector(vec_database, vec_query, ignore_dims=ignore_dims)
+    top_fons = np.array(fons[top_idx])
+    top_arrs = np.concatenate([np.array(y_train[top_idx]), denormalize_arrs(x_train[top_idx], mins, maxs)], axis=1)
+
+    combined = np.hstack([top_fons, top_scores.reshape(-1, 1), top_arrs])
+    vector_search_cols = ["RunID", "SCORE"] + ["膜厚_上", "膜厚_中", "膜厚_下"] + input_cols
+    df_top = pd.DataFrame(combined, columns=vector_search_cols)
+    return df_top
+
 def search_vector(arr, q, ignore_dims, func = "CosineSimilarity", top_n = 10):
     """ベクトル検索を行う"""
     use_dims = [i for i in range(arr.shape[1]) if i not in ignore_dims]
@@ -91,16 +113,13 @@ def search_vector(arr, q, ignore_dims, func = "CosineSimilarity", top_n = 10):
         dists = np.linalg.norm(arr_use - q_use, axis=1)
         top_idx = np.argsort(dists)[:top_n]
         top_scores = dists[top_idx]
-        top_arrs = arr[top_idx]
     elif func == "CosineSimilarity":
         q_use = q_use / np.linalg.norm(q_use)
         arr_norm = arr_use/ np.linalg.norm(arr_use, axis=1, keepdims=True)
         cos_sim = arr_norm @ q_use
         top_idx = np.argsort(cos_sim)[-top_n:][::-1]
         top_scores = cos_sim[top_idx]
-        top_arrs = arr[top_idx]
-    return top_idx, top_scores, top_arrs
-
+    return top_idx, top_scores
 
 def read_out(out_file, st_flag=True):
     """
@@ -189,7 +208,9 @@ class CVDRun:
             val = st.number_input(f"{var} の個数を入力", value=1, key=var)
             self.input_values.append(val)
         self.s12_temp = st.number_input("成膜温度S12 (℃)", value=1145)
+        self.s12_temp -= 1.0 # HACK 設定温度と実測温度のズレ補正
         self.s14_temp = st.number_input("成膜温度S14 (℃)", value=1185)
+        self.s14_temp -= 1.0 # HACK 設定温度と実測温度のズレ補正
         self.para = st.number_input("PARA値", value=15)
         self.mtcs_rate = st.number_input("MTCS比率", value=0.9)
         self.target_film_thickness = st.number_input("狙い膜厚", value=60)
