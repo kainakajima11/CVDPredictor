@@ -1,1 +1,1 @@
-from .model import SimpleFC
+from .model import ThreeFullyConnectedLayers
