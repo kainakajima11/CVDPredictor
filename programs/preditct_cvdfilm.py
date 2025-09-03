@@ -8,10 +8,10 @@ from model import ThreeFullyConnectedLayers
 
 def main():
     st.title("CVD SiCness Predictor")
-    out_file = st.file_uploader("outファイルを選んでください")
+    out_file = st.file_uploader("outファイル を選んでください")
     if out_file is not None:
         input_cols, mins, maxs, _n_train, _n_test, run_type = read_out(out_file)
-        uploaded_model = st.file_uploader("modelを選んでください(ex. model_weights.pth)", type=["pth"])
+        uploaded_model = st.file_uploader("model_weights.pth を選んでください", type=["pth"])
 
         if uploaded_model is not None:
             if run_type == "Normal": # 常圧
@@ -34,7 +34,7 @@ def main():
             goplot_preds(times, preds, cvdrun.target_film_thickness)
 
             st.header("類似操炉検索")
-            npz_file = st.file_uploader(".npzファイルを選んでください")
+            npz_file = st.file_uploader("dataset.npzファイルを選んでください", type=["npz"])
             if npz_file is not None:
                 data = np.load(npz_file, allow_pickle=True)
                 df_top = search_similar_runs(data, inputs_norm, mins, maxs, input_cols, cvdrun.target_film_thickness)
@@ -45,19 +45,20 @@ def main():
 
     st.markdown("""
         #### 膜厚予測について  
-        操炉内容から膜厚を予測し、成膜時間-予想膜厚グラフを作成する.常圧の場合はS14, 減圧の場合はS12.  
-        outファイルには, outというファイルを選択する.(model_weights.pthと同じ場所にあるもの) 
-        modelファイルには学習済み機械学習モデルファイル(model_weights.pth)を選択する.      
+        膜厚を予測し、成膜時間-予想膜厚グラフを作成します.
+        常圧の場合はStep14, 減圧の場合はStep12の長さです.
+        ディレクトリに必要なファイルがまとまっているので、適したout, model_weights.pthを選択してください.   
                 
-        グラフは3本の曲線と1本の横線が引かれる. 赤、青、緑の曲線はそれぞれ上部、中部、下部の予測膜厚を示す.
-        横線は狙い膜厚を表す。狙い膜厚は予測結果には影響しない.  
-        上部がない操炉(TLなど)であっても仕様上このモデルは上部の予測も出力される仕様である.      
+        得られるのは、3本の曲線(と横線)です. 赤、青、緑の曲線はそれぞれ上部、中部、下部の予測膜厚を表します.
+        横線は狙い膜厚を表します.狙い膜厚は指定しなくてもグラフの作成は可能です.  
+        上(中,下)部がない操炉においても, 仕様上予測がされます.    
 
         #### 類似操炉検索について 
-        操炉条件より、類似した条件の操炉の上位10個を出力します.  
-        SCOREは類似度であり、1に近いほど類似しています.  
-        例えば、1番類似している操炉が0.9であれば、似た操炉を過去に行っているということ、0.5程度であれば似た操炉を過去にやっていないことを表します.  
-        似た操炉をやっていなければ、この予測は少し信頼性に欠けるということにもなります.  
+        炉詰め内容と狙い膜厚から、似た内容・結果である操炉を検索します.(ベクトル検索)
+        SCOREはどれだけ類似しているかの度合いであり、1に近いほど類似しています. （コサイン類似度） 
+        例えば、1番類似している操炉が0.99であれば、似た操炉を過去に行っているということ、0.5程度であれば似た操炉を過去にやっていないことを表します.
+        (細かい判断基準は不明)
+        似た操炉をやっていなければ、この予測は少し信頼性に欠けている可能性が高いので注意してください.
     """)
 
 def normalize_arrs(arrs, mins, maxs):
@@ -67,21 +68,6 @@ def normalize_arrs(arrs, mins, maxs):
 def denormalize_arrs(arrs, mins, maxs):
     """正規化をもとに戻す"""
     return arrs * (maxs - mins) + mins
-    
-def _search_similar_runs(data, inputs_norm, mins, maxs, input_cols, inputs):
-    x_train = data["x_train"]
-    y_train = data["y_train"]
-    fons = data["others_train"]     
-    # ベクトル検索
-    top_idx, top_scores, top_arrs = search_vector(x_train, inputs_norm, ignore_dims=[11])
-    top_arrs = denormalize_arrs(top_arrs, mins, maxs)
-    top_fons = np.array(fons[top_idx])
-    top_thicknesses = np.array(y_train[top_idx])
-
-    combined = np.hstack([top_fons, top_scores.reshape(-1, 1), top_thicknesses, top_arrs])
-    vector_search_cols = ["RunID", "SCORE"] + ["膜厚_上", "膜厚_中", "膜厚_下"] + input_cols
-    df_top = pd.DataFrame(combined, columns=vector_search_cols)
-    return df_top
 
 def search_similar_runs(data, inputs_norm, mins, maxs, input_cols, target_thickness):
     x_train = data["x_train"]
@@ -90,10 +76,12 @@ def search_similar_runs(data, inputs_norm, mins, maxs, input_cols, target_thickn
 
     y_mins, y_maxs = np.nanmin(y_train, axis=0), np.nanmax(y_train, axis=0)
     y_norm_train = normalize_arrs(y_train, y_mins, y_maxs)
+    target_thickness_norm = [(t - mn) / (mx - mn) if t is not None else None for t, mx, mn in zip(target_thickness, y_maxs, y_mins)]
     ignore_dims = [i for i, col in enumerate(input_cols) if not col.startswith("品略")]
     ignore_dims = np.concatenate([ignore_dims, (np.where(np.isnan(y_mins))[0] + len(input_cols))], axis=0)
     vec_database = np.concatenate([x_train, y_norm_train], axis=1) # database
-    vec_query = np.concatenate([np.array(inputs_norm), np.array([target_thickness, target_thickness, target_thickness])])
+    vec_query = np.concatenate([np.array(inputs_norm), np.array(target_thickness_norm)])
+
     top_idx, top_scores = search_vector(vec_database, vec_query, ignore_dims=ignore_dims)
     top_fons = np.array(fons[top_idx])
     top_arrs = np.concatenate([np.array(y_train[top_idx]), denormalize_arrs(x_train[top_idx], mins, maxs)], axis=1)
@@ -103,23 +91,43 @@ def search_similar_runs(data, inputs_norm, mins, maxs, input_cols, target_thickn
     df_top = pd.DataFrame(combined, columns=vector_search_cols)
     return df_top
 
-def search_vector(arr, q, ignore_dims, func = "CosineSimilarity", top_n = 10):
-    """ベクトル検索を行う"""
-    use_dims = [i for i in range(arr.shape[1]) if i not in ignore_dims]
+def search_vector(arr, q, ignore_dims=[], func="CosineSimilarity", top_n=20):
+    q = np.array([np.nan if v is None else v for v in q], dtype=np.float64)
+    use_dims = [i for i in range(arr.shape[1])
+                if i not in ignore_dims and not np.isnan(q[i])]
+    if len(use_dims) == 0:
+        raise ValueError("使用可能な次元がありません（クエリがすべてNoneまたはignore指定）")
+
     arr_use = arr[:, use_dims]
     q_use = q[use_dims]
 
     if func == "EuclideanDistance":
-        dists = np.linalg.norm(arr_use - q_use, axis=1)
-        top_idx = np.argsort(dists)[:top_n]
-        top_scores = dists[top_idx]
+        mask = ~np.isnan(arr_use).any(axis=1)
+        valid_arr = arr_use[mask]
+        dists = np.linalg.norm(valid_arr - q_use, axis=1)
+        top_idx_in_valid = np.argsort(dists)[:top_n]
+        top_scores = dists[top_idx_in_valid]
+        top_idx = np.where(mask)[0][top_idx_in_valid]
+
     elif func == "CosineSimilarity":
-        q_use = q_use / np.linalg.norm(q_use)
-        arr_norm = arr_use/ np.linalg.norm(arr_use, axis=1, keepdims=True)
-        cos_sim = arr_norm @ q_use
+        q_norm = np.linalg.norm(q_use)
+        if q_norm == 0:
+            raise ValueError("クエリベクトルがゼロです（有効次元なし）")
+        q_use = q_use / q_norm
+
+        arr_norms = np.linalg.norm(arr_use, axis=1)
+        dot = np.nansum(arr_use * q_use, axis=1)
+        cos_sim = dot / arr_norms
+
+        cos_sim = np.where(np.isnan(cos_sim), -np.inf, cos_sim)
         top_idx = np.argsort(cos_sim)[-top_n:][::-1]
         top_scores = cos_sim[top_idx]
+
+    else:
+        raise ValueError(f"未対応の類似度関数です: {func}")
+
     return top_idx, top_scores
+
 
 def read_out(out_file, st_flag=True):
     """
@@ -213,7 +221,16 @@ class CVDRun:
         self.s14_temp -= 1.0 # HACK 設定温度と実測温度のズレ補正
         self.para = st.number_input("PARA値", value=15)
         self.mtcs_rate = st.number_input("MTCS比率", value=0.9)
-        self.target_film_thickness = st.number_input("狙い膜厚", value=60)
+        self.target_film_thickness = [None, None, None]
+        self.target_sections = st.multiselect("膜厚の狙い位置を選択してください. (複数選択可能)", ["上段", "中段", "下段"])
+        for var in self.target_sections:
+            val = st.number_input(f"{var}_狙い膜厚", value=60, key=var)
+            if var == "上段":
+                self.target_film_thickness[0] = val
+            elif var == "中段":
+                self.target_film_thickness[1] = val
+            elif var == "下段":
+                self.target_film_thickness[2] = val
 
     def make_inputs(self, input_dict):
         for var, val in zip(self.selected_vars, self.input_values):
@@ -236,10 +253,21 @@ def goplot_preds(times, preds, target_film_thickness):
     fig.add_trace(go.Scatter(
         x=times, y=preds[2], mode='lines+markers', name='Lower', line=dict(color='green')
     ))
-    fig.add_trace(go.Scatter(
-        x=times, y=[target_film_thickness] * len(times), mode='lines',
-        name='Target', line=dict(color='black', dash='dash')
-    ))
+    if target_film_thickness[0] is not None:
+        fig.add_trace(go.Scatter(
+            x=times, y=[target_film_thickness[0]] * len(times), mode='lines',
+            name='Upper Target', line=dict(color="#FD7878", dash='dash')
+        ))
+    if target_film_thickness[1] is not None:
+        fig.add_trace(go.Scatter(
+            x=times, y=[target_film_thickness[1]] * len(times), mode='lines',
+            name='Middle Target', line=dict(color="#7878FD", dash='dash')
+        ))
+    if target_film_thickness[2] is not None:
+        fig.add_trace(go.Scatter(
+            x=times, y=[target_film_thickness[2]] * len(times), mode='lines',
+            name='Lower Target', line=dict(color="#78FD78", dash='dash')
+        ))
     fig.update_layout(
         title="成膜時間-予想膜厚",
         xaxis_title="成膜時間",
