@@ -22,10 +22,14 @@ def main():
                 times = [70 + 5*i for i in range(67)] # 70 ~ 400
             input_dict = {k : 0 for k in input_cols}
             product_cols = [c for c in input_cols if c.startswith("品略")]
-
+            
+            # 保持治具情報を受け取る
+            selected_jig, selected_jig_idx = st_receive_jig(input_cols)
             # 炉詰め内容を受け取る
             selected_vars, input_values, temp_s12, temp_s14, para, target_film_thickness = st_receive_input(product_cols)
             inputs = make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para)
+            if selected_jig is not None:
+                inputs[selected_jig_idx] = 1
             inputs_norm = normalize_arrs(inputs, mins, maxs)
             # 予測を行う
             preds = predict(times, len(input_cols), uploaded_model, inputs_norm, time_idx, mins, maxs)
@@ -155,7 +159,6 @@ def predict(times, input_dim, model_path, inputs, time_idx, mins, maxs):
         for i, time in enumerate(times):
             inputs[0][time_idx] = (time - mins[time_idx]) / (maxs[time_idx] - mins[time_idx])
             preds[i] = model(inputs).numpy()
-    
     return preds.T
 
 def make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, para):
@@ -168,6 +171,24 @@ def make_inputs(input_dict, selected_vars, input_values, temp_s12, temp_s14, par
         if k in input_dict:
             input_dict[k] = v
     return np.array(list(input_dict.values()))
+
+def st_receive_jig(input_cols):
+    has_multitype_jig = False
+    for c in input_cols:
+        if c.startswith("保持治具"):
+            has_multitype_jig = True
+            break
+    if has_multitype_jig:
+        jig_cand, jig_cand_ids = [], []
+        for i, c in enumerate(input_cols):
+            if c.startswith("保持治具"):
+                jig_cand.append(c)
+                jig_cand_ids.append(i)
+        selected_jig = st.selectbox("保持治具を選択してください", jig_cand)
+        jig_cand_dict = dict(zip(jig_cand, jig_cand_ids))
+        return selected_jig, jig_cand_dict[selected_jig]
+    else:
+        return None, None
 
 def st_receive_input(products_list):
     selected_vars = st.multiselect("炉詰めする製品を選択してください（複数選択可）", products_list)

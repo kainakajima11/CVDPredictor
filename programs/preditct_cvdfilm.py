@@ -21,11 +21,10 @@ def main():
                 time_idx = next((i for i, x in enumerate(input_cols) if x == "S12_length"), None) 
                 times = [70 + 5*i for i in range(67)] # 70 ~ 400
             input_dict = {k : 0 for k in input_cols}
-            product_cols = [c for c in input_cols if c.startswith("品略")]
 
             # 炉詰め内容を受け取る
             cvdrun = CVDRun()
-            cvdrun.receive_input(product_cols)
+            cvdrun.receive_input(input_cols)
             inputs = cvdrun.make_inputs(input_dict)
             inputs_norm = normalize_arrs(inputs, mins, maxs)
             # 予測を行う
@@ -37,7 +36,7 @@ def main():
             npz_file = st.file_uploader("dataset.npzファイルを選んでください", type=["npz"])
             if npz_file is not None:
                 data = np.load(npz_file, allow_pickle=True)
-                df_top = search_similar_runs(data, inputs_norm, mins, maxs, input_cols, cvdrun.target_film_thickness)
+                df_top = cvdrun.search_similar_runs(data, inputs_norm, mins, maxs, input_cols)
                 st.write("今回の操炉内容")
                 st.dataframe(pd.DataFrame([inputs], columns = input_cols))
                 st.write("内容の近い操炉内容")
@@ -68,28 +67,6 @@ def normalize_arrs(arrs, mins, maxs):
 def denormalize_arrs(arrs, mins, maxs):
     """正規化をもとに戻す"""
     return arrs * (maxs - mins) + mins
-
-def search_similar_runs(data, inputs_norm, mins, maxs, input_cols, target_thickness):
-    x_train = data["x_train"]
-    y_train = data["y_train"]
-    fons = data["others_train"] 
-
-    y_mins, y_maxs = np.nanmin(y_train, axis=0), np.nanmax(y_train, axis=0)
-    y_norm_train = normalize_arrs(y_train, y_mins, y_maxs)
-    target_thickness_norm = [(t - mn) / (mx - mn) if t is not None else None for t, mx, mn in zip(target_thickness, y_maxs, y_mins)]
-    ignore_dims = [i for i, col in enumerate(input_cols) if not col.startswith("品略")]
-    ignore_dims = np.concatenate([ignore_dims, (np.where(np.isnan(y_mins))[0] + len(input_cols))], axis=0)
-    vec_database = np.concatenate([x_train, y_norm_train], axis=1) # database
-    vec_query = np.concatenate([np.array(inputs_norm), np.array(target_thickness_norm)])
-
-    top_idx, top_scores = search_vector(vec_database, vec_query, ignore_dims=ignore_dims)
-    top_fons = np.array(fons[top_idx])
-    top_arrs = np.concatenate([np.array(y_train[top_idx]), denormalize_arrs(x_train[top_idx], mins, maxs)], axis=1)
-
-    combined = np.hstack([top_fons, top_scores.reshape(-1, 1), top_arrs])
-    vector_search_cols = ["RunID", "SCORE"] + ["膜厚_上", "膜厚_中", "膜厚_下"] + input_cols
-    df_top = pd.DataFrame(combined, columns=vector_search_cols)
-    return df_top
 
 def search_vector(arr, q, ignore_dims=[], func="CosineSimilarity", top_n=20):
     q = np.array([np.nan if v is None else v for v in q], dtype=np.float64)
@@ -187,12 +164,16 @@ def predict(times, input_dim, model_path, inputs, time_idx, mins, maxs):
     return preds.T
 
 class CVDRun:
+    """1操炉(1入力)に必要な情報を持たせたクラス"""
     def __init__(self,):
         self.s12_temp, self.s14_temp, self.para = None, None, None
         self.mtcs_rate = None
         self.target_film_thickness = None
-        self.selected_vars = None
+        self.selected_products = None
         self.input_values = []
+        self.has_jig_info = False
+        self.jig = None
+        self.jig_id = None
 
     @property
     def s12_temp_upper(self):
@@ -210,9 +191,25 @@ class CVDRun:
     def s14_temp_lower(self):
         return self.s14_temp + self.para
     
-    def receive_input(self, products_list):
-        self.selected_vars = st.multiselect("炉詰めする製品を選択してください（複数選択可）", products_list)
-        for var in self.selected_vars:
+    def receive_jig(self, input_cols):
+        for c in input_cols:
+            if c.startswith("保持治具"):
+                self.has_jig_info = True
+        if self.has_jig_info:
+            jig_cand, jig_cand_ids = [], []
+            for i, c in enumerate(input_cols):
+                if c.startswith("保持治具"):
+                    jig_cand.append(c)
+                    jig_cand_ids.append(i)
+            self.jig = st.selectbox("保持治具を選択してください", jig_cand)
+            jig_cand_dict = dict(zip(jig_cand, jig_cand_ids))
+            self.jig_id = jig_cand_dict[self.jig]
+
+    def receive_input(self, input_cols):
+        self.receive_jig(input_cols)
+        product_cols = [c for c in input_cols if c.startswith("品略")]
+        self.selected_products = st.multiselect("炉詰めする製品を選択してください（複数選択可）", product_cols)
+        for var in self.selected_products:
             val = st.number_input(f"{var} の個数を入力", value=1, key=var)
             self.input_values.append(val)
         self.s12_temp = st.number_input("成膜温度S12 (℃)", value=1145)
@@ -233,15 +230,48 @@ class CVDRun:
                 self.target_film_thickness[2] = val
 
     def make_inputs(self, input_dict):
-        for var, val in zip(self.selected_vars, self.input_values):
+        # 保持治具
+        if self.jig is not None:
+            input_dict[self.jig] = 1
+        # 炉詰め製品
+        for var, val in zip(self.selected_products, self.input_values):
             input_dict[var] = val
-        input_key_cand = ["S12_Ave_TempUpper", "S12_Ave_TempLower", "S14_Ave_TempUpper", "S14_Ave_TempLower", "MTCS比率"]
+        # 条件項目
+        input_key_cand = ["S12_Ave_TempUpper", "S12_Ave_TempLower", "S14_Ave_TempUpper", "S14_Ave_TempLower", "MTCS"]
         input_value_cand = [self.s12_temp_upper, self.s12_temp_lower, self.s14_temp_upper, self.s14_temp_lower, self.mtcs_rate]
         for k, v in zip(input_key_cand, input_value_cand):
             if k in input_dict:
                 input_dict[k] = v
         return np.array(list(input_dict.values()))
     
+    def search_similar_runs(self, data, inputs_norm, mins, maxs, input_cols):
+        if self.jig is not None:
+            mask = data["x_train"][:, self.jig_id] == 1
+            x_train = data["x_train"][mask]
+            y_train = data["y_train"][mask]
+            fons = data["others_train"][mask]
+        else: 
+            x_train = data["x_train"]
+            y_train = data["y_train"]
+            fons = data["others_train"] 
+
+        y_mins, y_maxs = np.nanmin(y_train, axis=0), np.nanmax(y_train, axis=0)
+        y_norm_train = normalize_arrs(y_train, y_mins, y_maxs)
+        target_thickness_norm = [(t - mn) / (mx - mn) if t is not None else None for t, mx, mn in zip(self.target_film_thickness, y_maxs, y_mins)]
+        ignore_dims = [i for i, col in enumerate(input_cols) if not col.startswith("品略")]
+        ignore_dims = np.concatenate([ignore_dims, (np.where(np.isnan(y_mins))[0] + len(input_cols))], axis=0)
+        vec_database = np.concatenate([x_train, y_norm_train], axis=1) # database
+        vec_query = np.concatenate([np.array(inputs_norm), np.array(target_thickness_norm)])
+
+        top_idx, top_scores = search_vector(vec_database, vec_query, ignore_dims=ignore_dims)
+        top_fons = np.array(fons[top_idx])
+        top_arrs = np.concatenate([np.array(y_train[top_idx]), denormalize_arrs(x_train[top_idx], mins, maxs)], axis=1)
+
+        combined = np.hstack([top_fons, top_scores.reshape(-1, 1), top_arrs])
+        vector_search_cols = ["RunID", "SCORE"] + ["膜厚_上", "膜厚_中", "膜厚_下"] + input_cols
+        df_top = pd.DataFrame(combined, columns=vector_search_cols)
+        return df_top        
+
 def goplot_preds(times, preds, target_film_thickness):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -277,33 +307,5 @@ def goplot_preds(times, preds, target_film_thickness):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# for debug
-def manual_main():
-    out_file_path = r"C:\Users\kai.nakajima\Desktop\AMG\FilmThicknessPrediction\results\20250801_135815_BK\out"
-    with open(out_file_path, "r",  encoding="utf-8") as f:
-        input_cols, mins, maxs, n_train, n_test, run_type = read_out(f, st_flag=False)
-    model = r"C:\Users\kai.nakajima\Desktop\AMG\FilmThicknessPrediction\results\20250801_135815_BK\model_full.pth"
-    time_idx = next((i for i, x in enumerate(input_cols) if x == "S14_length"), None)
-
-    inputs = np.array([0, 0, 5, 4, 4, 0, 0, 0, 0, 0, 0, 0, 200, 1155, 1160, 1195, 1200, 0.9])
-    inputs_norm = normalize_arrs(inputs, mins, maxs)
-
-    times = [30 + 5*i for i in range(30)]
-    preds = predict(times, model, inputs_norm, time_idx, mins, maxs)
-
-    npz_file = r"C:\Users\kai.nakajima\Desktop\AMG\FilmThicknessPrediction\results\20250801_135815_BK\dataset.npz" # st.file_uploader(".npzファイルを選んでください")
-    if npz_file is not None:
-        data = np.load(npz_file, allow_pickle=True)
-        x_train = data["x_train"]
-        fons = data["others_train"]     
-        top_idx, top_dists, top_arrs = search_vector(x_train, inputs_norm, ignore_dims=[11])
-        top_arrs = denormalize_arrs(top_arrs, mins, maxs)
-        top_fons = np.array(fons[top_idx])
-        combined = np.hstack([top_fons, top_dists.reshape(-1, 1), top_arrs])
-        vector_search_cols = ["RunID", "DISTANCE"] + input_cols
-        df_query = pd.DataFrame([inputs], columns = input_cols)
-        df_top = pd.DataFrame(combined, columns=vector_search_cols)
-
 if __name__ == "__main__":
     main()
-    # manual_main()
