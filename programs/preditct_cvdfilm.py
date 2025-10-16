@@ -212,12 +212,13 @@ class CVDRun:
         for var in self.selected_products:
             val = st.number_input(f"{var} の個数を入力", value=1, key=var)
             self.input_values.append(val)
-        self.s12_temp = st.number_input("成膜温度S12 (℃)", value=1145)
+        self.s12_temp = st.number_input("成膜温度ステップ12 (℃)", value=1145)
         self.s12_temp -= 1.0 # HACK 設定温度と実測温度のズレ補正
-        self.s14_temp = st.number_input("成膜温度S14 (℃)", value=1185)
+        self.s14_temp = st.number_input("成膜温度ステップ14 (℃)", value=1185)
         self.s14_temp -= 1.0 # HACK 設定温度と実測温度のズレ補正
         self.para = st.number_input("PARA値", value=15)
-        self.mtcs_rate = st.number_input("MTCS比率", value=0.9)
+        if "MTCS" in input_cols:
+            self.mtcs_rate = st.number_input("MTCS比率", value=0.9)
         self.target_film_thickness = [None, None, None]
         self.target_sections = st.multiselect("膜厚の狙い位置を選択してください. (複数選択可能)", ["上段", "中段", "下段"])
         for var in self.target_sections:
@@ -300,8 +301,8 @@ def goplot_preds(times, preds, target_film_thickness):
         ))
     fig.update_layout(
         title="成膜時間-予想膜厚",
-        xaxis_title="成膜時間",
-        yaxis_title="予想膜厚",
+        xaxis_title="成膜時間(常圧の場合はstep14) [min]",
+        yaxis_title="予想膜厚 [um]",
         hovermode="x unified",
         template="plotly_white"
     )
